@@ -34,9 +34,18 @@ typedef struct privatedata {
 static ssize_t test_store(struct device *dev, struct device_attribute *attr, const char *buff, size_t len)
 {
     private_data_t *data = dev_get_drvdata(dev);
+    int ret;
+    long value;
 
-    i2c_smbus_write_byte(data->client, buff[0]);
-    PINFO("GPIO change to %02X \n", buff[0]);
+    ret = kstrtol(buff, 10, &value);
+    if (IS_ERR(ret))
+    {
+        value = 0;
+        PINFO ("value input error: %ld", PTR_ERR(ret));
+    }
+
+    i2c_smbus_write_byte(data->client, value);
+    PINFO("GPIO change to %02X \n", value);
 
     return len;
 }
@@ -144,8 +153,7 @@ static const struct i2c_device_id pcf8574_7seg_id[]={
 MODULE_DEVICE_TABLE(i2c, pcf8574_7seg_id);	
 
 static const struct of_device_id pcf8574_of_match[] = {
-    //{ .compatible = "nxp,pcf8574_7seg", },
-    { .compatible = "dm",},
+    { .compatible = "nxp,pcf8574_7seg", },
     {}
 };
 
@@ -159,6 +167,7 @@ static struct i2c_driver pcf8574_7seg_driver = {
     },
     .probe = pcf8574_7seg_probe,
     .remove = pcf8574_7seg_remove,
+    .id_table = pcf8574_7seg_id,
 };
 
 module_i2c_driver(pcf8574_7seg_driver);

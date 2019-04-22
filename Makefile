@@ -1,7 +1,6 @@
 TARGET_MOUDLE := pcf8574_7seg
 obj-m += $(TARGET_MOUDLE).o
-#KERNEL_SRC := /lib/modules/$(shell uname -r )/build
-KERNEL_SRC := /mydata/github/linux-fslc
+#KERNEL_SRC := /path/to/your/kernel
 SRC := $(shell pwd)
 
 all:
