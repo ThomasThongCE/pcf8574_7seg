@@ -55,7 +55,9 @@ static ssize_t test_show(struct device *dev, struct device_attribute *attr, char
     int ret;
     private_data_t *data = dev_get_drvdata(dev);
 
-    return i2c_smbus_read_byte(data->client);
+    ret = scnprintf(buf, PAGE_SIZE, "%d\n", i2c_smbus_read_byte(data->client));
+
+    return ret;
 }
 
 // create struct device_attribute variable
@@ -174,4 +176,4 @@ module_i2c_driver(pcf8574_7seg_driver);
 
 MODULE_LICENSE("GPL v2");
 MODULE_AUTHOR("THOMASTHONG");
-MODULE_DESCRIPTION("Senven segment led control via pcf8574 and 74hc595");
+MODULE_DESCRIPTION("Seven segment led control via pcf8574 and 74hc595");
