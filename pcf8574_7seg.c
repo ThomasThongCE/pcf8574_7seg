@@ -11,7 +11,6 @@
 #include <linux/i2c.h>
 #include <linux/kthread.h>  //kernel threads
 #include <linux/sched.h>    //task_struct 
-//#include <unistd.h>         // sleep in second
 
 #define PDEBUG(fmt,args...) printk(KERN_DEBUG"%s: "fmt,DRIVER_NAME, ##args)
 #define PERR(fmt,args...) printk(KERN_ERR"%s: "fmt,DRIVER_NAME,##args)
@@ -21,6 +20,18 @@
 #define FIRST_MINOR 0
 #define BUFF_SIZE 100
 #define THREAD_NAME "7seg"
+
+#define COMMON_ANODE
+//#define COMMON_CATHODE
+#define SCLK 7
+#define RCLK 6
+#define DIO 5
+#define FREQ 60
+
+const int segment[] =
+{// 0    1    2    3    4    5    6    7    8    9    A    b    C    d    E    F    -
+  0xC0,0xF9,0xA4,0xB0,0x99,0x92,0x82,0xF8,0x80,0x90,0x8C,0xBF,0xC6,0xA1,0x86,0xFF,0xbf
+};
 
 dev_t device_num ;
 typedef struct privatedata {
@@ -33,17 +44,82 @@ typedef struct privatedata {
 	struct mutex lock;
 } private_data_t;
 
+void sclk_up (struct i2c_client *client)
+{
+    int value = i2c_smbus_read_byte(client);
+    
+    i2c_smbus_write_byte(client, value&~(1 << SCLK));    //low
+    //udelay(1);
+    i2c_smbus_write_byte(client, value|(1 << SCLK));    //high
+}
+
+void rclk_up (struct i2c_client *client)
+{
+    int value = i2c_smbus_read_byte(client);
+    
+    i2c_smbus_write_byte(client, value&~(1 << RCLK));    //low
+    //udelay(1);
+    i2c_smbus_write_byte(client, value|(1 << RCLK));    //high
+}
+
+void set_data(struct i2c_client *client, bool bit)
+{
+    int value = i2c_smbus_read_byte(client);
+
+    #ifdef COMMON_ANODE
+    if (bit)
+        i2c_smbus_write_byte(client, value|(1 << DIO));    //high 0000 0001 << 5 0010 0000
+    else 
+        i2c_smbus_write_byte(client, value&~(1 << DIO));    //low
+    #elif COMMON_CATHODE
+    if (bit)
+        i2c_smbus_write_byte(client, value&~(1 << DIO));    //high
+    else 
+        i2c_smbus_write_byte(client, value|(1 << DIO));    //low
+    //#else 
+    #endif
+}
+
 static int set_7seg(void *param)
 {
     private_data_t* data = (private_data_t* )param;
     pid_t pid = current->pid;
+    int delay = 1000 / FREQ, i, j, index[8],  num = data->num; 
 
+    PINFO ("7seg led on\n");
+    for (i = 0 ; i < 8 ; ++i)
+    {
+        index[i] = num % 10;
+        num /= 10;
+    }
     while(1)
     {
         if (kthread_should_stop())
             break;
-        PINFO ("thread %s is running\n", THREAD_NAME);
-        msleep(3000);
+        // show first number
+        int num = data->num, index;
+        for (i = 7; i >= 0 ; --i)
+        {
+            index = num % 10;
+            num /= 10;
+            // set led value
+            for (j = 0; j < 8; ++j)
+            {
+                set_data(data->client, (segment[index] << j) & 0x80);
+                sclk_up(data->client);
+            }
+
+            // choose which led to run
+            for (j = 0; j < 8; ++j)
+            {
+                if (j != i)
+                    set_data(data->client, 0);
+                else 
+                    set_data(data->client, 1);
+                sclk_up(data->client);
+            }
+            rclk_up(data->client);
+        }
     }
 
     PINFO ("thread %s stopped, PID: %d\n", THREAD_NAME, pid);
@@ -72,9 +148,6 @@ static ssize_t number_store(struct device *dev, struct device_attribute *attr, c
         mutex_lock(&data->lock);
         data->num = value;
         mutex_unlock(&data->lock);
-
-        //i2c_smbus_write_byte(data->client, value);
-        //PINFO("GPIO change to %02X \n", value);
     }
 
     return len;
@@ -158,8 +231,6 @@ static int pcf8574_7seg_probe (struct i2c_client *client,
     }
     private_data->task = task;
     i2c_set_clientdata(client, private_data);
-    
-
     return 0;
 
     //error handle
