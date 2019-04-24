@@ -9,6 +9,9 @@
 #include <linux/slab.h>     // kmalloc, kcallloc, ....
 #include <linux/mutex.h>
 #include <linux/i2c.h>
+#include <linux/kthread.h>  //kernel threads
+#include <linux/sched.h>    //task_struct 
+//#include <unistd.h>         // sleep in second
 
 #define PDEBUG(fmt,args...) printk(KERN_DEBUG"%s: "fmt,DRIVER_NAME, ##args)
 #define PERR(fmt,args...) printk(KERN_ERR"%s: "fmt,DRIVER_NAME,##args)
@@ -17,15 +20,35 @@
 #define DRIVER_NAME "pcf8574_7seg"
 #define FIRST_MINOR 0
 #define BUFF_SIZE 100
+#define THREAD_NAME "7seg"
 
 dev_t device_num ;
 typedef struct privatedata {
     struct class * dev_class;
     struct device* dev;
     struct i2c_client *client;
+    struct task_struct* task;
 
 	struct mutex lock;
 } private_data_t;
+
+static int set_7seg(void *param)
+{
+    private_data_t* data = (private_data_t* )param;
+    pid_t pid = current->pid;
+
+    while(1)
+    {
+        if (kthread_should_stop())
+            break;
+        PINFO ("thread %s is running\n", THREAD_NAME);
+        msleep(3000);
+    }
+
+    PINFO ("thread %s stopped, PID: %d\n", THREAD_NAME, pid);
+    do_exit(0);
+    return 0;
+}
 
 /***********************************/
 /***** define device attribute *****/
@@ -80,12 +103,15 @@ static int pcf8574_7seg_probe (struct i2c_client *client,
     private_data_t * private_data;
     struct device * dev;
     struct class * dev_class;
+    struct task_struct* task;
 
     PINFO ("driver pcf8574 init\n");
 
     // create private data
     private_data = (private_data_t*) kmalloc (sizeof(private_data_t), GFP_KERNEL);
 
+    // create task_struct
+    task = (struct task_struct*) kmalloc (sizeof(struct task_struct), GFP_KERNEL);
 
     // register a device with major and minor number without create device file
     ret = alloc_chrdev_region(&device_num, FIRST_MINOR, 250, DRIVER_NAME); 
@@ -118,6 +144,12 @@ static int pcf8574_7seg_probe (struct i2c_client *client,
     private_data->dev = dev;
     private_data->client = client;
     mutex_init(&private_data->lock);
+    task = kthread_run(set_7seg, private_data, THREAD_NAME);
+    if (IS_ERR(task))
+    {
+        PINFO ("Can't create thread to control 7seg led, error: %ld\n", PTR_ERR(task));
+    }
+    private_data->task = task;
     i2c_set_clientdata(client, private_data);
     
 
@@ -136,10 +168,15 @@ error:
 
 static int pcf8574_7seg_remove(struct i2c_client *client)
 {
+    int ret;
     private_data_t *data = i2c_get_clientdata(client);
 
     PINFO("driver pcf8574 remove from kernel\n");
 
+    ret = kthread_stop(data->task);
+    if (ret == -EINTR)
+        PINFO ("Process never been wakeup\n");
+    PINFO("All child thread stopped\n");
     device_destroy(data->dev_class, device_num);
     class_destroy(data->dev_class);
     unregister_chrdev_region(device_num, FIRST_MINOR); 
