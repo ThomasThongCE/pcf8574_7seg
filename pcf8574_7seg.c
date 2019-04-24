@@ -28,6 +28,7 @@ typedef struct privatedata {
     struct device* dev;
     struct i2c_client *client;
     struct task_struct* task;
+    uint32_t num;
 
 	struct mutex lock;
 } private_data_t;
@@ -54,40 +55,46 @@ static int set_7seg(void *param)
 /***** define device attribute *****/
 /***********************************/
 
-static ssize_t test_store(struct device *dev, struct device_attribute *attr, const char *buff, size_t len)
+static ssize_t number_store(struct device *dev, struct device_attribute *attr, const char *buff, size_t len)
 {
     private_data_t *data = dev_get_drvdata(dev);
     int ret;
-    long value;
+    long value = 0, temp = len, i;
 
+    // check if input is valid
     ret = kstrtol(buff, 10, &value);
-    if (IS_ERR(ret))
+    if (ret)
     {
         value = 0;
-        PINFO ("value input error: %ld", PTR_ERR(ret));
+        PINFO ("Can only input number, value input error: %d", ret);
     }
+    else{
+        mutex_lock(&data->lock);
+        data->num = value;
+        mutex_unlock(&data->lock);
 
-    i2c_smbus_write_byte(data->client, value);
-    PINFO("GPIO change to %02X \n", value);
+        //i2c_smbus_write_byte(data->client, value);
+        //PINFO("GPIO change to %02X \n", value);
+    }
 
     return len;
 }
 
-static ssize_t test_show(struct device *dev, struct device_attribute *attr, char *buf)
+static ssize_t number_show(struct device *dev, struct device_attribute *attr, char *buf)
 { 
     int ret;
     private_data_t *data = dev_get_drvdata(dev);
 
-    ret = scnprintf(buf, PAGE_SIZE, "%d\n", i2c_smbus_read_byte(data->client));
+    ret = scnprintf(buf, PAGE_SIZE, "%ld\n", data->num);
 
     return ret;
 }
 
 // create struct device_attribute variable
-static DEVICE_ATTR_RW(test);
+static DEVICE_ATTR_RW(number);
 
 static struct attribute *device_attrs[] = {
-	    &dev_attr_test.attr,
+	    &dev_attr_number.attr,
 	    NULL
 };
 ATTRIBUTE_GROUPS(device);
@@ -108,7 +115,7 @@ static int pcf8574_7seg_probe (struct i2c_client *client,
     PINFO ("driver pcf8574 init\n");
 
     // create private data
-    private_data = (private_data_t*) kmalloc (sizeof(private_data_t), GFP_KERNEL);
+    private_data = (private_data_t*) kcalloc (1, sizeof(private_data_t), GFP_KERNEL);
 
     // create task_struct
     task = (struct task_struct*) kmalloc (sizeof(struct task_struct), GFP_KERNEL);
