@@ -24,6 +24,7 @@
 #define COMMON_ANODE
 //#define COMMON_CATHODE
 #define DIGIT 4
+#define NUM_DIGIT 8
 #define SCLK 7
 #define RCLK 6
 #define DIO 5
@@ -101,8 +102,14 @@ static int set_7seg(void *param)
 {
     private_data_t* data = (private_data_t* )param;
     pid_t pid = current->pid;
-    int delay = 1000 / FREQ, i, j, buff_index = 0;
-    bool bit ; 
+    int delay = 1000 / FREQ, i, j, buff_index = 0, num_digit = 0;
+    bool bit ;
+
+    #ifdef NUM_DIGIT
+    num_digit = NUM_DIGIT;
+    #else
+    num_digit = DIGIT;
+    #endif
 
     PINFO ("7seg led on\n");
     while(1)
@@ -125,7 +132,7 @@ static int set_7seg(void *param)
             }
 
             // set digit
-            for (j = 0; j < 8; ++j)
+            for (j = 0; j < num_digit; ++j)
             {
                 if (j != i)
                     set_data(data, 0);
