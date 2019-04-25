@@ -23,6 +23,7 @@
 
 #define COMMON_ANODE
 //#define COMMON_CATHODE
+#define DIGIT 4
 #define SCLK 7
 #define RCLK 6
 #define DIO 5
@@ -32,6 +33,7 @@ const int segment[] =
 {// 0    1    2    3    4    5    6    7    8    9    A    b    C    d    E    F    -
   0xC0,0xF9,0xA4,0xB0,0x99,0x92,0x82,0xF8,0x80,0x90,0x8C,0xBF,0xC6,0xA1,0x86,0xFF,0xbf
 };
+const uint8_t default_value = (1<<SCLK) | (1<<RCLK) | (1<<DIO);
 
 dev_t device_num ;
 typedef struct privatedata {
@@ -40,85 +42,102 @@ typedef struct privatedata {
     struct i2c_client *client;
     struct task_struct* task;
     uint32_t num;
+    uint8_t buff[100];
+    uint8_t buff_index;
+    uint8_t current_data;
 
 	struct mutex lock;
 } private_data_t;
 
-void sclk_up (struct i2c_client *client)
+void sclk_up (private_data_t *data)
 {
-    int value = i2c_smbus_read_byte(client);
-    
-    i2c_smbus_write_byte(client, value&~(1 << SCLK));    //low
-    //udelay(1);
-    i2c_smbus_write_byte(client, value|(1 << SCLK));    //high
+    data->buff[data->buff_index++] = data->current_data & ~(1 << SCLK);
+    data->buff[data->buff_index++] = data->current_data | (1 << SCLK);
+
+    data->current_data = data->buff[data->buff_index - 1];
 }
 
-void rclk_up (struct i2c_client *client)
+void rclk_up (private_data_t *data)
 {
-    int value = i2c_smbus_read_byte(client);
-    
-    i2c_smbus_write_byte(client, value&~(1 << RCLK));    //low
-    //udelay(1);
-    i2c_smbus_write_byte(client, value|(1 << RCLK));    //high
+    data->buff[data->buff_index++] = data->current_data & ~(1 << RCLK);
+    data->buff[data->buff_index++] = data->current_data | (1 << RCLK);
+
+    data->current_data = data->buff[data->buff_index - 1];
 }
 
-void set_data(struct i2c_client *client, bool bit)
+void set_data(private_data_t *data, bool bit)
 {
-    int value = i2c_smbus_read_byte(client);
-
     #ifdef COMMON_ANODE
     if (bit)
-        i2c_smbus_write_byte(client, value|(1 << DIO));    //high 0000 0001 << 5 0010 0000
+    {
+        data->buff[data->buff_index++] = data->current_data | (1 << DIO); 
+        data->current_data = data->buff[data->buff_index - 1];
+    }
+
     else 
-        i2c_smbus_write_byte(client, value&~(1 << DIO));    //low
+    {
+        data->buff[data->buff_index++] = data->current_data & ~(1 << DIO);
+        data->current_data = data->buff[data->buff_index - 1];
+    }
+        
     #elif COMMON_CATHODE
     if (bit)
-        i2c_smbus_write_byte(client, value&~(1 << DIO));    //high
+        data->buff[data->buff_index++] = data->current_data & ~(1 << DIO); 
     else 
-        i2c_smbus_write_byte(client, value|(1 << DIO));    //low
+        data->buff[data->buff_index++] = data->current_data | (1 << DIO);
     //#else 
     #endif
+
+    
+}
+
+void send_data(private_data_t *data)
+{
+    i2c_master_send(data->client, data->buff, data->buff_index);
+    data->buff_index = 0;
 }
 
 static int set_7seg(void *param)
 {
     private_data_t* data = (private_data_t* )param;
     pid_t pid = current->pid;
-    int delay = 1000 / FREQ, i, j, index[8],  num = data->num; 
+    int delay = 1000 / FREQ, i, j, buff_index = 0;
+    bool bit ; 
 
     PINFO ("7seg led on\n");
-    for (i = 0 ; i < 8 ; ++i)
-    {
-        index[i] = num % 10;
-        num /= 10;
-    }
     while(1)
     {
         if (kthread_should_stop())
             break;
-        // show first number
+
         int num = data->num, index;
-        for (i = 7; i >= 0 ; --i)
+        
+        for (i = DIGIT; i >= 0 ; --i)
         {
             index = num % 10;
             num /= 10;
+            
             // set led value
             for (j = 0; j < 8; ++j)
             {
-                set_data(data->client, (segment[index] << j) & 0x80);
-                sclk_up(data->client);
+                set_data(data,(segment[index] << j) & 0x80);
+                sclk_up(data);
             }
 
-            // choose which led to run
+            // set digit
             for (j = 0; j < 8; ++j)
             {
                 if (j != i)
-                    set_data(data->client, 0);
+                    set_data(data, 0);
                 else 
-                    set_data(data->client, 1);
-                sclk_up(data->client);
+                    set_data(data, 1);
+                sclk_up(data);
             }
-            rclk_up(data->client);
+            rclk_up(data);
+
+            if (kthread_should_stop())
+                break;
+                send_data(data);
         }
     }
 
@@ -223,6 +242,8 @@ static int pcf8574_7seg_probe (struct i2c_client *client,
     private_data->dev_class = dev_class;
     private_data->dev = dev;
     private_data->client = client;
+    private_data->buff_index = 0;
+    private_data->current_data = default_value;
     mutex_init(&private_data->lock);
     task = kthread_run(set_7seg, private_data, THREAD_NAME);
     if (IS_ERR(task))
